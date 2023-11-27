@@ -2,6 +2,8 @@
 
 /** @var \Laravel\Lumen\Routing\Router $router */
 
+use Illuminate\Support\Facades\Hash;
+
 /*
 |--------------------------------------------------------------------------
 | Application Routes
@@ -14,6 +16,7 @@
 */
 
 $router->get('/', function () use ($router) {
+    return Hash::make('a');
     return $router->app->version();
 });
 
@@ -43,13 +46,13 @@ $router->group(['prefix' => 'report'], function () use ($router) {
 $router->post('/login-back', 'UserController@authenticate');
 $router->post('/logout-back', ['uses'=>'UserController@logout', 'middleware'=>'auth']);
 $router->post('/reset-pass', ['uses'=>'UserController@resetPass', 'middleware'=>'auth']);
-$router->post('/add-member', 'UserController@addMember');
-$router->get('/get-member', 'UserController@getMember');
-$router->post('/update-member', 'UserController@updateMember');
-$router->post('/delete-member/{id}', 'UserController@deleteMember');
+$router->post('/add-member', ['uses'=>'UserController@resetPaddMemberass', 'middleware'=>'auth']);
+$router->get('/get-member', ['uses'=>'UserController@getMember', 'middleware'=>'auth']);
+$router->post('/update-member', ['uses'=>'UserController@updateMember', 'middleware'=>'auth']);
+$router->post('/delete-member/{id}', ['uses'=>'UserController@deleteMember', 'middleware'=>'auth']);
 
 
-$router->get('/user', 'UserController@index');
+$router->get('/user', ['uses'=>'UserController@index', 'middleware'=>'auth']);
 
 
 
