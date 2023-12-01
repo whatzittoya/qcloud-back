@@ -97,12 +97,13 @@ class TransactionController extends Controller
         $stores=json_decode($this->guzzleReq($api_url));
      
 
-        $store = 'MDN-Sun';
+        $store = Auth::user()->location;
 
         if(Auth::user()->role=='admin') {
-            return $stores;
+            asort($stores);
+            return array_merge(['All'], $stores) ;
         }
-        return $stores[array_search($store, $stores)];
+        return [$stores[array_search($store, $stores)]];
         
 
     }

@@ -46,7 +46,7 @@ $router->group(['prefix' => 'report'], function () use ($router) {
 $router->post('/login-back', 'UserController@authenticate');
 $router->post('/logout-back', ['uses'=>'UserController@logout', 'middleware'=>'auth']);
 $router->post('/reset-pass', ['uses'=>'UserController@resetPass', 'middleware'=>'auth']);
-$router->post('/add-member', ['uses'=>'UserController@resetPaddMemberass', 'middleware'=>'auth']);
+$router->post('/add-member', ['uses'=>'UserController@addMember', 'middleware'=>'auth']);
 $router->get('/get-member', ['uses'=>'UserController@getMember', 'middleware'=>'auth']);
 $router->post('/update-member', ['uses'=>'UserController@updateMember', 'middleware'=>'auth']);
 $router->post('/delete-member/{id}', ['uses'=>'UserController@deleteMember', 'middleware'=>'auth']);
