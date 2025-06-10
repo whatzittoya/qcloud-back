@@ -3,6 +3,8 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Illuminate\Hashing\BcryptHasher;
+use Illuminate\Support\Facades\DB;
 
 class DatabaseSeeder extends Seeder
 {
@@ -13,6 +15,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run()
     {
-        // $this->call('UsersTableSeeder');
+        DB::table('users')->insert([
+            'name' => 'Administrator',
+            'email' => 'admin@example.com',
+            'password' => (new BcryptHasher)->make('password'),
+            'role' => 'admin',
+            'location' => 'Jakarta',
+            'api_key' => ''
+        ]);
     }
 }

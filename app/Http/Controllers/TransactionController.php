@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Store;
+use App\Models\Client as ModelsClient;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
 use GuzzleHttp\Cookie\CookieJar;
@@ -15,7 +17,7 @@ class TransactionController extends Controller
     private $quinosAPI;
     private $quinosToken;
     private $username;
-    private $password ;
+    private $password;
 
 
     public function __construct()
@@ -23,18 +25,21 @@ class TransactionController extends Controller
         $this->middleware('auth');
 
         // Specify the path to the cookie file
-        $cookieFile = __DIR__ . '/cookies.txt';
+        $client = ModelsClient::where('id', Auth::user()->client_id)->first();
+        if (!$client) {
+            return abort(404);
+        }
+        $client_name = $client->name;
+        $cookieFile = __DIR__ . '/' . $client_name . '.txt';
 
         // Create a Guzzle client instance
         $this->client = new Client();
 
         // Create a FileCookieJar to handle cookies and store them in the specified file
         $this->cookieJar = new FileCookieJar($cookieFile, true);
-        $this->quinosAPI=env("QUINOS_API");
-        $this->quinosToken=env("QUINOS_TOKEN");
-        $this->username = env("QUINOS_EMAIL");
-        $this->password = env("QUINOS_PASSWORD");
-
+        $this->quinosAPI = $client->url;
+        $this->username = $client->email;
+        $this->password = $client->password;
     }
     public function index()
     {
@@ -50,14 +55,14 @@ class TransactionController extends Controller
         $client = new Client();
 
         // Define login credentials
-    
+
 
         // Define the login URL
         $loginUrl = "{$this->quinosAPI}/staffs/login";
-   
+
         $client = new Client(array(
-                'cookies' => $this->cookieJar,
-            ));
+            'cookies' => $this->cookieJar,
+        ));
 
 
         $response = $client->request('POST', $loginUrl, [
@@ -67,66 +72,60 @@ class TransactionController extends Controller
                 'data[Staff][password]' => $this->password,
             ]
         ]);
+        // echo $response->getBody()->getContents();
         return str_contains($response->getBody()->getContents(), "Data Configuration");
-
     }
-    
-    public function monthly($store="")
+
+    public function monthly($store = "")
     {
-        if(strtolower($store) == 'all') {
-            $store='';
+        if (strtolower($store) == 'all') {
+            $store = '';
         }
         $api_url = "{$this->quinosAPI}/reports/getMonthlyTransactionReport/{$store}";
         return $this->guzzleReq($api_url);
-
     }
-    public function daily($date1, $date2, $store="")
+    public function daily($date1, $date2, $store = "")
     {
-        if(strtolower($store) == 'all') {
-            $store='';
+        if (strtolower($store) == 'all') {
+            $store = '';
         }
 
         $api_url = "https://quinoscloud.com/cloud/reports/getTransactionReport/{$date1}/{$date2}/{$store}";
         return $this->guzzleReq($api_url);
-
     }
 
     public function store()
     {
-        $api_url = "{$this->quinosAPI}/staffs/listStore";
-        $stores=json_decode($this->guzzleReq($api_url));
-     
 
         $store = Auth::user()->location;
-
-        if(Auth::user()->role=='admin') {
-            asort($stores);
-            return array_merge(['All'], $stores) ;
+        $api_url = "{$this->quinosAPI}/staffs/listStore";
+        $stores = json_decode($this->guzzleReq($api_url));
+        $stores = Store::createOrUpdate($stores, Auth::user()->client_id);
+        if (Auth::user()->role == 'admin' || Auth::user()->role == 'super-admin') {
+            $stores = Store::listStoreAdmin($stores, Auth::user()->client_id);
         }
-        return [$stores[array_search($store, $stores)]];
-        
+        return response()->json($stores);
 
+        // return [$stores[array_search($store, $stores)]];
     }
-    
+
     public function guzzleReq($api_url)
     {
-        
+
         $client = new Client();
         $response = $client->request('GET', $api_url, ['cookies' => $this->cookieJar]);
         $body = $response->getBody()->getContents();
+        if (str_contains($body, 'Sign in')) {
 
-        if(str_contains($body, 'Sign in')) {
+            $login = $this->login();
 
-            $login=$this->login();
-
-            if($login) {
+            if ($login) {
                 $response = $client->request('GET', $api_url, ['cookies' => $this->cookieJar]);
                 $body = $response->getBody()->getContents();
             } else {
-                $body=[];
+                $body = [];
             }
         }
         return $body;
     }
-
 }

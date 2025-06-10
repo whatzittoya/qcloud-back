@@ -19,7 +19,7 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
      * @var array
      */
     protected $fillable = [
-        'name', 'email','api_key','role','password','location'
+        'name', 'email', 'api_key', 'role', 'password', 'location', 'client_id'
     ];
 
     /**
@@ -30,4 +30,10 @@ class User extends Model implements AuthenticatableContract, AuthorizableContrac
     protected $hidden = [
         'password',
     ];
+
+
+    public function store()
+    {
+        return $this->hasOne('App\Models\Store', 'name', 'location');
+    }
 }

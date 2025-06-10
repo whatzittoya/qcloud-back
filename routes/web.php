@@ -15,10 +15,15 @@ use Illuminate\Support\Facades\Hash;
 |
 */
 
-$router->get('/', function () use ($router) {
-    return Hash::make('a');
-    return $router->app->version();
+// $router->get('/', function () use ($router) {
+//     return Hash::make('a');
+//     return $router->app->version();
+// });
+$router->get('/test', function () use ($router) {
+    return 'test text';
 });
+
+$router->get('/', 'TransactionController@login');
 
 $router->group(['prefix' => 'transaction'], function () use ($router) {
     $router->get('/', 'TransactionController@index');
@@ -28,7 +33,6 @@ $router->group(['prefix' => 'transaction'], function () use ($router) {
     $router->get('/daily/{date1}/{date2}/{store}', 'TransactionController@daily');
     $router->get('/daily/{date1}/{date2}', 'TransactionController@daily');
     $router->get('/store', 'TransactionController@store');
-
 });
 
 $router->group(['prefix' => 'report'], function () use ($router) {
@@ -38,21 +42,37 @@ $router->group(['prefix' => 'report'], function () use ($router) {
     $router->get('/no-sales/{date1}/{date2}/{store}', 'ReportsController@noSales');
     $router->get('/item-sales/{date1}/{date2}/{store}', 'ReportsController@itemSales');
     $router->get('/sales-type/{date1}/{date2}/{store}', 'ReportsController@salesType');
-
-
-
+    $router->get('/consolidate/{month}/{year}/{store_f}', 'ReportsController@consolidateReport');
+    $router->post('/consolidate-additional', 'ReportsController@storeConsolidateAdditional');
 });
 
+$router->group(['prefix' => 'api'], function () use ($router) {
+    $router->get('/daily-transaction/{date1}/{date2}/{store}', 'DailyTransactionController@index');
+});
+$router->group(['prefix' => 'client'], function () use ($router) {
+    $router->get('/', 'ClientController@index');
+    $router->post('/', 'ClientController@store');
+    $router->post('/update', 'ClientController@update');
+    $router->post('/delete/{id}', 'ClientController@destroy');
+    $router->get('/store', 'StoreController@index');
+    $router->post('/store', 'StoreController@update');
+    $router->get('/store/admin/{client}', 'StoreController@getAdmin');
+});
+$router->group(['prefix' => 'super_admin'], function () use ($router) {
+    $router->post('/change-client', 'UserController@changeClientId');
+});
+
+
 $router->post('/login-back', 'UserController@authenticate');
-$router->post('/logout-back', ['uses'=>'UserController@logout', 'middleware'=>'auth']);
-$router->post('/reset-pass', ['uses'=>'UserController@resetPass', 'middleware'=>'auth']);
-$router->post('/add-member', ['uses'=>'UserController@addMember', 'middleware'=>'auth']);
-$router->get('/get-member', ['uses'=>'UserController@getMember', 'middleware'=>'auth']);
-$router->post('/update-member', ['uses'=>'UserController@updateMember', 'middleware'=>'auth']);
-$router->post('/delete-member/{id}', ['uses'=>'UserController@deleteMember', 'middleware'=>'auth']);
+$router->post('/logout-back', ['uses' => 'UserController@logout', 'middleware' => 'auth']);
+$router->post('/reset-pass', ['uses' => 'UserController@resetPass', 'middleware' => 'auth']);
+$router->post('/add-member', ['uses' => 'UserController@addMember', 'middleware' => 'auth']);
+$router->get('/get-member', ['uses' => 'UserController@getMember', 'middleware' => 'auth']);
+$router->post('/update-member', ['uses' => 'UserController@updateMember', 'middleware' => 'auth']);
+$router->post('/delete-member/{id}', ['uses' => 'UserController@deleteMember', 'middleware' => 'auth']);
 
 
-$router->get('/user', ['uses'=>'UserController@index', 'middleware'=>'auth']);
+$router->get('/user', ['uses' => 'UserController@index', 'middleware' => 'auth']);
 
 
 
