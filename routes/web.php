@@ -19,10 +19,6 @@ use Illuminate\Support\Facades\Hash;
 //     return Hash::make('a');
 //     return $router->app->version();
 // });
-$router->get('/test', function () use ($router) {
-    return 'test text';
-});
-
 $router->get('/', 'TransactionController@login');
 
 $router->group(['prefix' => 'transaction'], function () use ($router) {
@@ -44,6 +40,28 @@ $router->group(['prefix' => 'report'], function () use ($router) {
     $router->get('/sales-type/{date1}/{date2}/{store}', 'ReportsController@salesType');
     $router->get('/consolidate/{month}/{year}/{store_f}', 'ReportsController@consolidateReport');
     $router->post('/consolidate-additional', 'ReportsController@storeConsolidateAdditional');
+});
+
+$router->group(['prefix' => 'warehouse'], function () use ($router) {
+    $router->get('/list', 'WarehouseController@warehouseList');
+    //stockmovement
+    $router->get('/stock-movement/{date}', 'WarehouseController@getStockMovement');
+    // PO management
+    $router->post('/po', 'WarehouseController@storePo');
+    $router->post('/po/add', 'WarehouseController@addPo');
+    $router->put('/po/{id}', 'WarehouseController@updatePo');
+    $router->delete('/po/{id}', 'WarehouseController@deletePo');
+});
+
+$router->group(['prefix' => 'stock-level'], function () use ($router) {
+    $router->get('/sync-warehouses', 'StockLevelController@syncWarehousesToDatabase');
+    $router->get('/sync/{warehouse_id}', 'StockLevelController@syncStockLevel');
+    $router->get('/display', 'StockLevelController@getStockMinimumDisplay');
+    $router->get('/sync-movement', 'StockLevelController@syncStockMovement');
+    $router->get('/sync-movement-date/{date}', 'StockLevelController@syncStockMovementDate');
+    $router->get('/sync-movement-range/{start_date}/{end_date}', 'StockLevelController@syncStockMovementDateRange');
+    $router->get('/available-dates', 'StockLevelController@getAvailableMovementDates');
+    $router->get('/latest-date/{warehouse_id?}', 'StockLevelController@getLatestStockMovementDate');
 });
 
 $router->group(['prefix' => 'api'], function () use ($router) {
