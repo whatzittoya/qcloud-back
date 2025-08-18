@@ -46,11 +46,8 @@ $router->group(['prefix' => 'warehouse'], function () use ($router) {
     $router->get('/list', 'WarehouseController@warehouseList');
     //stockmovement
     $router->get('/stock-movement/{date}', 'WarehouseController@getStockMovement');
-    // PO management
-    $router->post('/po', 'WarehouseController@storePo');
-    $router->post('/po/add', 'WarehouseController@addPo');
-    $router->put('/po/{id}', 'WarehouseController@updatePo');
-    $router->delete('/po/{id}', 'WarehouseController@deletePo');
+    $router->get('/purchase-orders', 'WarehouseController@getPurchaseOrders');
+    $router->post('/po', 'WarehouseController@createOrUpdatePo');
 });
 
 $router->group(['prefix' => 'stock-level'], function () use ($router) {

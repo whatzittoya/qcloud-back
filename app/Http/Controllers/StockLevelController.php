@@ -8,6 +8,7 @@ use App\Models\StockMinimum;
 use App\Models\StockMovement;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use GuzzleHttp\Cookie\FileCookieJar;
 use GuzzleHttp\Client;
 
@@ -312,6 +313,7 @@ class StockLevelController extends Controller
     }
     public function syncStockMovementDate($date)
     {
+        $refresh = request()->has('refresh') && request()->refresh === 'true';
         try {
             // Get all warehouses for the current client
             $warehouses = Warehouse::where('client_id', Auth::user()->client_id)->get();
@@ -323,115 +325,18 @@ class StockLevelController extends Controller
                 ], 404);
             }
 
-            $totalCreated = 0;
-            $totalUpdated = 0;
-            $warehouseResults = [];
-            foreach ($warehouses as $warehouse) {
-                $warehouseId = $warehouse->warehouse_id;
-
-                // Check if data already exists for this warehouse and date
-                $existingData = StockMovement::where('warehouse_id', $warehouseId)
-                    ->where('stock_movement_date', $date)
-                    ->first();
-                if ($existingData) {
-                    $warehouseResults[] = [
-                        'warehouse_id' => $warehouseId,
-                        'warehouse_name' => $warehouse->name,
-                        'status' => 'skipped',
-                        'message' => "Data already exists for {$date}"
-                    ];
-                    continue;
-                }
-
-                // Fetch data from API for this specific date
-                $api_url = "{$this->quinosAPI}/stocks/getStockMovementReport/0/{$warehouseId}/{$date}";
-                $stockMovement = json_decode($this->guzzleReq($api_url), true);
-
-                if (!$stockMovement || !isset($stockMovement['stocks'])) {
-                    $warehouseResults[] = [
-                        'warehouse_id' => $warehouseId,
-                        'warehouse_name' => $warehouse->name,
-                        'status' => 'failed',
-                        'message' => 'Failed to fetch data from API'
-                    ];
-                    continue;
-                }
-
-                $warehouseCreated = 0;
-                $warehouseUpdated = 0;
-
-                foreach ($stockMovement['stocks'] as $stock) {
-                    $stockData = $stock['Stock'];
-                    $itemData = $stock['Item'];
-                    $categoryData = $stock['Category'];
-
-                    // Calculate listed value using the same logic as calcListed function
-                    $opening = intval($stockData['opening'] ?? 0);
-                    $sales = intval($stockData['sales'] ?? 0);
-                    $received = intval($stockData['received'] ?? 0);
-                    $released = intval($stockData['released'] ?? 0);
-                    $transfer_in = intval($stockData['transfer_in'] ?? 0);
-                    $transfer_out = intval($stockData['transfer_out'] ?? 0);
-                    $waste = intval($stockData['waste'] ?? 0);
-                    $production = intval($stockData['production'] ?? 0);
-                    $calculated = intval($stockData['calculated'] ?? 0);
-                    $onhand = intval($stockData['onhand'] ?? 0);
-
-                    $listed = $opening + $received - $sales - $released + $transfer_in - $transfer_out - $waste + $production - $calculated - $onhand;
-
-                    $stockMovementRecord = StockMovement::updateOrCreate(
-                        [
-                            'item_id' => $itemData['id'],
-                            'warehouse_id' => $warehouseId,
-                            'stock_movement_date' => $date
-                        ],
-                        [
-                            'item_code' => $itemData['code'],
-                            'item_name' => $itemData['name'],
-                            'item_category' => $categoryData['name'],
-                            'opening' => $opening,
-                            'sales' => $sales,
-                            'received' => $received,
-                            'released' => $released,
-                            'transfer_in' => $transfer_in,
-                            'transfer_out' => $transfer_out,
-                            'waste' => $waste,
-                            'production' => $production,
-                            'calculated' => $calculated,
-                            'onhand' => $onhand,
-                            'listed' => $listed,
-                            'stock_movement_date' => $date
-                        ]
-                    );
-
-                    if ($stockMovementRecord->wasRecentlyCreated) {
-                        $warehouseCreated++;
-                        $totalCreated++;
-                    } else {
-                        $warehouseUpdated++;
-                        $totalUpdated++;
-                    }
-                }
-
-                $warehouseResults[] = [
-                    'warehouse_id' => $warehouseId,
-                    'warehouse_name' => $warehouse->name,
-                    'status' => 'success',
-                    'created' => $warehouseCreated,
-                    'updated' => $warehouseUpdated,
-                    'total' => count($stockMovement['stocks'])
-                ];
-            }
+            // Use the private method to sync data
+            $syncResult = $this->syncStockMovementDataForDate($date, $warehouses, $refresh);
 
             return response()->json([
                 'success' => true,
-                'message' => "Stock movement synced for date {$date}. Total Created: {$totalCreated}, Total Updated: {$totalUpdated}",
+                'message' => "Stock movement synced for date {$date}" . ($refresh ? " (refresh mode)" : "") . ". Total Created: {$syncResult['total_created']}, Total Updated: {$syncResult['total_updated']}",
                 'data' => [
                     'date' => $date,
-                    'total_created' => $totalCreated,
-                    'total_updated' => $totalUpdated,
+                    'total_created' => $syncResult['total_created'],
+                    'total_updated' => $syncResult['total_updated'],
                     'warehouses_processed' => count($warehouses),
-                    'warehouse_results' => $warehouseResults
+                    'warehouse_results' => $syncResult['warehouse_results']
                 ]
             ]);
         } catch (\Exception $e) {
@@ -442,8 +347,152 @@ class StockLevelController extends Controller
         }
     }
 
+    /**
+     * Public method to sync stock movement data for a specific date
+     * Can be used by both syncStockMovementDate and getStockMovement
+     */
+    public function syncStockMovementDataForDate($date, $warehouses, $refresh = false)
+    {
+        $totalCreated = 0;
+        $totalUpdated = 0;
+        $warehouseResults = [];
+
+        foreach ($warehouses as $warehouse) {
+            $warehouseId = $warehouse->warehouse_id;
+
+            // Check if data already exists for this warehouse and date
+            $existingData = StockMovement::where('warehouse_id', $warehouseId)
+                ->where('stock_movement_date', $date)
+                ->first();
+            if ($existingData && !$refresh) {
+                $warehouseResults[] = [
+                    'warehouse_id' => $warehouseId,
+                    'warehouse_name' => $warehouse->name,
+                    'status' => 'skipped',
+                    'message' => "Data already exists for {$date}"
+                ];
+                continue;
+            }
+
+            // Fetch data from API for this specific date
+            $api_url = "{$this->quinosAPI}/stocks/getStockMovementReport/0/{$warehouseId}/{$date}";
+            $stockMovement = json_decode($this->guzzleReq($api_url), true);
+
+            if (!$stockMovement || !isset($stockMovement['stocks'])) {
+                $warehouseResults[] = [
+                    'warehouse_id' => $warehouseId,
+                    'warehouse_name' => $warehouse->name,
+                    'status' => 'failed',
+                    'message' => 'Failed to fetch data from API'
+                ];
+                continue;
+            }
+
+            $warehouseCreated = 0;
+            $warehouseUpdated = 0;
+
+            // Prepare batch data for bulk upsert
+            $batchData = [];
+            foreach ($stockMovement['stocks'] as $stock) {
+                $stockData = $stock['Stock'];
+                $itemData = $stock['Item'];
+                $categoryData = $stock['Category'];
+
+                // Calculate listed value using the same logic as calcListed function
+                $opening = intval($stockData['opening'] ?? 0);
+                $sales = intval($stockData['sales'] ?? 0);
+                $received = intval($stockData['received'] ?? 0);
+                $released = intval($stockData['released'] ?? 0);
+                $transfer_in = intval($stockData['transfer_in'] ?? 0);
+                $transfer_out = intval($stockData['transfer_out'] ?? 0);
+                $waste = intval($stockData['waste'] ?? 0);
+                $production = intval($stockData['production'] ?? 0);
+                $calculated = intval($stockData['calculated'] ?? 0);
+                $onhand = intval($stockData['onhand'] ?? 0);
+
+                $listed = $opening + $received - $sales - $released + $transfer_in - $transfer_out - $waste + $production - $calculated - $onhand;
+
+                $batchData[] = [
+                    'item_id' => $itemData['id'],
+                    'warehouse_id' => $warehouseId,
+                    'stock_movement_date' => $date,
+                    'item_code' => $itemData['code'],
+                    'item_name' => $itemData['name'],
+                    'item_category' => $categoryData['name'],
+                    'opening' => $opening,
+                    'sales' => $sales,
+                    'received' => $received,
+                    'released' => $released,
+                    'transfer_in' => $transfer_in,
+                    'transfer_out' => $transfer_out,
+                    'waste' => $waste,
+                    'production' => $production,
+                    'calculated' => $calculated,
+                    'onhand' => $onhand,
+                    'listed' => $listed,
+                    'updated_at' => \Carbon\Carbon::now(),
+                    'created_at' => \Carbon\Carbon::now()
+                ];
+            }
+
+            // Delete old data first, then insert new data
+            if (!empty($batchData)) {
+                // Delete existing data for this warehouse and date
+                DB::table('stock_movement')
+                    ->where('warehouse_id', $warehouseId)
+                    ->where('stock_movement_date', $date)
+                    ->delete();
+
+                // Prepare values for bulk insert
+                $values = [];
+                $placeholders = [];
+
+                foreach ($batchData as $record) {
+                    $placeholders[] = '(' . implode(',', array_fill(0, count($record), '?')) . ')';
+                    $values = array_merge($values, array_values($record));
+                }
+
+                // Bulk insert new data
+                $sql = "
+                    INSERT INTO stock_movement (
+                        item_id, warehouse_id, stock_movement_date, item_code, item_name, 
+                        item_category, opening, sales, received, released, transfer_in, 
+                        transfer_out, waste, production, calculated, onhand, listed, 
+                        updated_at, created_at
+                    ) VALUES " . implode(',', $placeholders);
+
+                DB::statement($sql, $values);
+
+                // All records are new after delete + insert
+                $warehouseCreated = count($batchData);
+                $warehouseUpdated = 0;
+
+                $totalCreated += $warehouseCreated;
+                $totalUpdated += $warehouseUpdated;
+            }
+
+            $warehouseResults[] = [
+                'warehouse_id' => $warehouseId,
+                'warehouse_name' => $warehouse->name,
+                'status' => 'success',
+                'created' => $warehouseCreated,
+                'updated' => $warehouseUpdated,
+                'total' => count($stockMovement['stocks'])
+            ];
+        }
+
+        return [
+            'total_created' => $totalCreated,
+            'total_updated' => $totalUpdated,
+            'warehouse_results' => $warehouseResults
+        ];
+    }
+
     public function syncStockMovementDateRange($start_date, $end_date)
     {
+        $refresh = request()->get('refresh', false);
+        $refresh = filter_var($refresh, FILTER_VALIDATE_BOOLEAN);
+
         try {
             // Validate date format
             if (!strtotime($start_date) || !strtotime($end_date)) {
@@ -487,11 +536,11 @@ class StockLevelController extends Controller
                 $currentDate = $start_date;
                 while (strtotime($currentDate) <= strtotime($end_date)) {
                     // Check if data already exists for this warehouse and date
-                    $existingData = StockMovement::where('warehouse_id', $warehouseId)
-                        ->where('stock_movement_date', $currentDate)
+                    $existingData = StockMovement::where('stock_movement_date', $currentDate)
+                        ->where('warehouse_id', $warehouseId)
                         ->first();
 
-                    if ($existingData) {
+                    if ($existingData && !$refresh) {
                         $warehouseDatesSkipped++;
                         $currentDate = date('Y-m-d', strtotime($currentDate . ' +1 day'));
                         continue;
@@ -534,7 +583,7 @@ class StockLevelController extends Controller
                         $calculated = intval($stockData['calculated'] ?? 0);
                         $onhand = intval($stockData['onhand'] ?? 0);
 
-                        $listed = $opening + $received - $sales - $released + $transfer_in - $transfer_out - $waste + $production - $calculated - $onhand;
+                        $listed = $opening + $sales + $received - $sales - $released + $transfer_in - $transfer_out - $waste + $production - $calculated - $onhand;
 
                         $stockMovementRecord = StockMovement::updateOrCreate(
                             [
@@ -601,7 +650,7 @@ class StockLevelController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => "Stock movement synced for date range {$start_date} to {$end_date}. Total Created: {$totalCreated}, Total Updated: {$totalUpdated}",
+                'message' => "Stock movement synced for date range {$start_date} to {$end_date}" . ($refresh ? " (refresh mode)" : "") . ". Total Created: {$totalCreated}, Total Updated: {$totalUpdated}",
                 'data' => [
                     'date_range' => [
                         'start_date' => $start_date,

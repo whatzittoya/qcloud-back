@@ -7,7 +7,6 @@ use App\Models\Client as ModelsClient;
 use App\Models\StockMovement;
 use App\Models\StockMovementPo;
 use App\Models\Warehouse;
-
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use GuzzleHttp\Cookie\FileCookieJar;
@@ -84,7 +83,7 @@ class WarehouseController extends Controller
         return array_values($result);
     }
 
-    public function getStockMovement($date)
+    public function getStockMovement($date, Request $request)
     {
         try {
             // Get all warehouses for the current client
@@ -97,6 +96,8 @@ class WarehouseController extends Controller
                 ], 404);
             }
 
+            // Check if refresh flag is set
+            $refresh = $request->has('refresh') && $request->refresh === 'true';
             // Check if data exists for the specific date with stock level join
             $stockMovements = StockMovement::leftJoin('stock_minimum', function ($join) {
                 $join->on('stock_movement.item_id', '=', 'stock_minimum.item_id')
@@ -107,10 +108,14 @@ class WarehouseController extends Controller
                 ->whereIn('stock_movement.warehouse_id', $warehouses->pluck('warehouse_id'))
                 ->get();
 
-            // If no data exists for this date, sync first
-            if ($stockMovements->isEmpty()) {
+            // If refresh flag is set or no data exists for this date, sync first
+            if ($refresh || $stockMovements->isEmpty()) {
                 $stockLevelController = new StockLevelController();
-                $syncResult = $stockLevelController->syncStockMovementDate($date);
+                // Use the private method directly for better performance
+                $warehouses = Warehouse::where('client_id', Auth::user()->client_id)->where('warehouse_id', 2677)->get();
+
+
+                $syncResult = $stockLevelController->syncStockMovementDataForDate($date, $warehouses, $refresh);
 
                 // Fetch data again after sync
                 $stockMovements = StockMovement::leftJoin('stock_minimum', function ($join) {
@@ -130,8 +135,12 @@ class WarehouseController extends Controller
                 }
             }
 
-            // Get PO data for the date
-            $poData = StockMovementPo::where('date', $date)->get()->keyBy('item_id');
+            // Check if PO data exists for this date
+            $poData = StockMovementPo::where('date', $date)->first();
+            $poIds = [];
+            if ($poData) {
+                $poIds = explode(';', $poData->po);
+            }
 
             // Group data by item_id
             $groupedData = [];
@@ -139,16 +148,11 @@ class WarehouseController extends Controller
                 $itemId = $stock->item_id;
 
                 if (!isset($groupedData[$itemId])) {
-                    $poRecord = $poData->get($itemId);
-                    // return $poRecord;
-                    $poValue = $poRecord ? $poRecord->po : '';
-
                     $groupedData[$itemId] = [
                         'item_id' => $itemId,
                         'code' => $stock->item_code,
                         'name' => $stock->item_name,
-                        'category' => $stock->item_category,
-                        'po' => $poValue
+                        'category' => $stock->item_category
                     ];
                 }
 
@@ -165,11 +169,9 @@ class WarehouseController extends Controller
             $result = [];
             foreach ($groupedData as $itemId => $itemData) {
                 $row = [
-                    'item_id' => $itemId,
                     'code' => $itemData['code'],
                     'name' => $itemData['name'],
-                    'category' => $itemData['category'],
-                    'po' => $itemData['po']
+                    'category' => $itemData['category']
                 ];
 
                 // Add warehouse columns
@@ -186,7 +188,7 @@ class WarehouseController extends Controller
                 'success' => true,
                 'data' => $result,
                 'date' => $date,
-                'debug_po_count' => $poData->count(),
+                'po_ids' => $poIds,
                 'warehouses' => $warehouses->map(function ($warehouse) {
                     return [
                         'id' => $warehouse->warehouse_id,
@@ -219,6 +221,73 @@ class WarehouseController extends Controller
         }
 
         return response()->json($parsedWarehouses);
+    }
+
+    public function getPurchaseOrders()
+    {
+        try {
+            $api_url = "{$this->quinosAPI}/purchaseOrders/load/search:/closed:1";
+            $response = json_decode($this->guzzleReq($api_url), true);
+
+            if (!$response || !isset($response['result'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to fetch purchase orders from API'
+                ], 500);
+            }
+
+            $poList = [];
+            foreach ($response['result'] as $po) {
+                if (isset($po['PurchaseOrder']['id'])) {
+                    $poList[] = [
+                        'po_id' => $po['PurchaseOrder']['id'],
+                        'supplier_name' => $po['Supplier']['name'] ?? '',
+                        'date' => $po['PurchaseOrder']['date'] ?? '',
+                        'total' => $po['PurchaseOrder']['total'] ?? '0'
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $poList,
+                'total' => count($poList)
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching purchase orders: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function createOrUpdatePo(Request $request)
+    {
+        try {
+            // Join array of po_ids with semicolon delimiter
+            $poString = implode(';', $request->po_ids);
+
+            // Create or update PO record for the date
+            $poRecord = StockMovementPo::updateOrCreate(
+                ['date' => $request->date],
+                ['po' => $poString]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => $poRecord->wasRecentlyCreated ? 'PO created successfully' : 'PO updated successfully',
+                'data' => [
+                    'date' => $poRecord->date,
+                    'po' => $poRecord->po,
+                    'po_ids' => $request->po_ids
+                ]
+            ], $poRecord->wasRecentlyCreated ? 201 : 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error creating/updating PO: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
 
@@ -267,107 +336,5 @@ class WarehouseController extends Controller
             }
         }
         return $body;
-    }
-
-    public function storePo(Request $request)
-    {
-        try {
-            $po = StockMovementPo::create([
-                'item_id' => $request->item_id,
-                'date' => $request->date,
-                'po' => $request->po
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'PO created successfully',
-                'data' => $po
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error creating PO: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    public function addPo(Request $request)
-    {
-        try {
-            // Check if PO already exists for this item and date
-            $existingPo = StockMovementPo::where('item_id', $request->item_id)
-                ->where('date', $request->date)
-                ->first();
-
-            if ($existingPo) {
-                // Update existing PO
-                $existingPo->update(['po' => $request->po]);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'PO updated successfully',
-                    'data' => $existingPo,
-                    'action' => 'updated'
-                ]);
-            } else {
-                // Create new PO
-                $po = StockMovementPo::create([
-                    'item_id' => $request->item_id,
-                    'date' => $request->date,
-                    'po' => $request->po
-                ]);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'PO added successfully',
-                    'data' => $po,
-                    'action' => 'created'
-                ], 201);
-            }
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error adding PO: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    public function updatePo(Request $request, $id)
-    {
-        try {
-            $po = StockMovementPo::findOrFail($id);
-            $po->update([
-                'po' => $request->po
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'PO updated successfully',
-                'data' => $po
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error updating PO: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    public function deletePo($id)
-    {
-        try {
-            $po = StockMovementPo::findOrFail($id);
-            $po->delete();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'PO deleted successfully'
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error deleting PO: ' . $e->getMessage()
-            ], 500);
-        }
     }
 }
