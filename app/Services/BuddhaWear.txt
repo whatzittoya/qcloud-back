@@ -1,0 +1,1 @@
+[{"Name":"CAKEPHP","Value":"qneei1tec8sfrp0hr6umhf9qe0","Domain":"quinoscloud.com","Path":"\/","Max-Age":14400,"Expires":1757091093,"Secure":true,"Discard":false,"HttpOnly":true}]

@@ -47,18 +47,44 @@ $router->group(['prefix' => 'warehouse'], function () use ($router) {
     //stockmovement
     $router->get('/stock-movement/{date}', 'WarehouseController@getStockMovement');
     $router->get('/purchase-orders', 'WarehouseController@getPurchaseOrders');
-    $router->post('/po', 'WarehouseController@createOrUpdatePo');
+    // $router->post('/po', 'WarehouseController@createOrUpdatePo');
+    $router->get('/po-preview/{po_id}/{stock_date}', 'WarehouseController@getPO');
+    $router->post('/po', 'WarehouseController@syncPosForStockDate');
+    $router->post('/need-to-order', 'WarehouseController@updateNeedToOrder');
 });
 
 $router->group(['prefix' => 'stock-level'], function () use ($router) {
     $router->get('/sync-warehouses', 'StockLevelController@syncWarehousesToDatabase');
     $router->get('/sync/{warehouse_id}', 'StockLevelController@syncStockLevel');
     $router->get('/display', 'StockLevelController@getStockMinimumDisplay');
+
     $router->get('/sync-movement', 'StockLevelController@syncStockMovement');
     $router->get('/sync-movement-date/{date}', 'StockLevelController@syncStockMovementDate');
     $router->get('/sync-movement-range/{start_date}/{end_date}', 'StockLevelController@syncStockMovementDateRange');
     $router->get('/available-dates', 'StockLevelController@getAvailableMovementDates');
     $router->get('/latest-date/{warehouse_id?}', 'StockLevelController@getLatestStockMovementDate');
+});
+
+$router->group(['prefix' => 'stock-minimum'], function () use ($router) {
+    $router->get('/', 'StockMinimumController@index');
+    $router->post('/', 'StockMinimumController@store');
+    $router->get('/{id}', 'StockMinimumController@show');
+    $router->put('/{id}', 'StockMinimumController@update');
+    $router->delete('/{id}', 'StockMinimumController@destroy');
+
+    // Bulk operations
+    $router->post('/bulk-insert', function (\Illuminate\Http\Request $request) {
+        $controller = new App\Http\Controllers\StockMinimumController();
+        return $controller->bulkInsert($request->input('data', []));
+    });
+    $router->put('/bulk-update', function (\Illuminate\Http\Request $request) {
+        $controller = new App\Http\Controllers\StockMinimumController();
+        return $controller->bulkUpdate($request->input('data', []));
+    });
+    $router->post('/bulk-upsert', function (\Illuminate\Http\Request $request) {
+        $controller = new App\Http\Controllers\StockMinimumController();
+        return $controller->bulkUpsert($request->input('data', []));
+    });
 });
 
 $router->group(['prefix' => 'api'], function () use ($router) {

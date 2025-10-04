@@ -4,9 +4,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Client as ModelsClient;
+use App\Models\PurchaseOrder;
 use App\Models\StockMovement;
 use App\Models\StockMovementPo;
 use App\Models\Warehouse;
+use App\Services\QuinosApiService;
+use App\Services\PurchaseOrderService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use GuzzleHttp\Cookie\FileCookieJar;
@@ -135,12 +138,16 @@ class WarehouseController extends Controller
                 }
             }
 
-            // Check if PO data exists for this date
-            $poData = StockMovementPo::where('date', $date)->first();
-            $poIds = [];
-            if ($poData) {
-                $poIds = explode(';', $poData->po);
-            }
+            // Get PO IDs from purchase_orders table for this date
+            $poIds = PurchaseOrder::where('stock_movement_date', $date)
+                ->pluck('po_id')
+                ->toArray();
+
+            // Get need_to_order data for this date
+            $needToOrderData = StockMovementPo::where('date', $date)
+                ->pluck('need_to_order', 'item_code')
+                ->toArray();
+            // return  $needToOrderData;
 
             // Group data by item_id
             $groupedData = [];
@@ -152,7 +159,9 @@ class WarehouseController extends Controller
                         'item_id' => $itemId,
                         'code' => $stock->item_code,
                         'name' => $stock->item_name,
-                        'category' => $stock->item_category
+                        'category' => $stock->item_category,
+                        'po' => 0,
+                        'need_to_order' => $needToOrderData[$stock->item_code] ?? 0
                     ];
                 }
 
@@ -163,6 +172,9 @@ class WarehouseController extends Controller
 
                 $groupedData[$itemId][$warehouseName] = $stock->listed;
                 $groupedData[$itemId][$warehouseName . '-requested'] = $requested;
+
+                // Sum PO quantities across all warehouses
+                $groupedData[$itemId]['po'] += $stock->po ?? 0;
             }
 
             // Convert to array and add 0 for warehouses without data
@@ -171,7 +183,9 @@ class WarehouseController extends Controller
                 $row = [
                     'code' => $itemData['code'],
                     'name' => $itemData['name'],
-                    'category' => $itemData['category']
+                    'category' => $itemData['category'],
+                    'po' => $itemData['po'],
+                    'need_to_order' => $itemData['need_to_order']
                 ];
 
                 // Add warehouse columns
@@ -226,7 +240,7 @@ class WarehouseController extends Controller
     public function getPurchaseOrders()
     {
         try {
-            $api_url = "{$this->quinosAPI}/purchaseOrders/load/search:/closed:1";
+            $api_url = "{$this->quinosAPI}/purchaseOrders/load/search:/closed:0";
             $response = json_decode($this->guzzleReq($api_url), true);
 
             if (!$response || !isset($response['result'])) {
@@ -266,7 +280,7 @@ class WarehouseController extends Controller
         try {
             // Join array of po_ids with semicolon delimiter
             $poString = implode(';', $request->po_ids);
-
+            $stock_date = $request->date;
             // Create or update PO record for the date
             $poRecord = StockMovementPo::updateOrCreate(
                 ['date' => $request->date],
@@ -286,6 +300,76 @@ class WarehouseController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error creating/updating PO: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+
+    public function getPO(Request $request)
+    {
+        $poId = $request->po_ids;
+        $stock_date = $request->stock_date;
+
+        // Get data from API
+        $quinosApiService = new QuinosApiService();
+        $apiData = $quinosApiService->getPurchaseOrderPreview($poId);
+        // Store to database
+        $poService = new PurchaseOrderService();
+        $result = $poService->storeOrUpdatePo($apiData, $stock_date);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'PO stored successfully',
+            'data' => $result
+        ]);
+    }
+
+    public function syncPosForStockDate(Request $request)
+    {
+        $poIds = $request->po_ids; // Array of PO IDs
+        $stock_date = $request->stock_date;
+
+        $poService = new PurchaseOrderService();
+        $result = $poService->syncMultiplePosForStockDate($poIds, $stock_date);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Synced POs for stock date {$stock_date}",
+            'data' => $result
+        ]);
+    }
+
+    public function updateNeedToOrder(Request $request)
+    {
+        try {
+            $date = $request->date;
+            $itemCode = $request->item_code;
+            $needToOrder = $request->need_to_order;
+
+            // Create or update the need_to_order record
+            $poRecord = StockMovementPo::updateOrCreate(
+                [
+                    'date' => $date,
+                    'item_code' => $itemCode
+                ],
+                [
+                    'need_to_order' => $needToOrder
+                ]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => $poRecord->wasRecentlyCreated ? 'Need to order created successfully' : 'Need to order updated successfully',
+                'data' => [
+                    'date' => $poRecord->date,
+                    'item_code' => $poRecord->item_code,
+                    'need_to_order' => $poRecord->need_to_order
+                ]
+            ], $poRecord->wasRecentlyCreated ? 201 : 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error updating need to order: ' . $e->getMessage()
             ], 500);
         }
     }

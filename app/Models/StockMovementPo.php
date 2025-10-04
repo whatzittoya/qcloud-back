@@ -10,10 +10,13 @@ class StockMovementPo extends Model
 
     protected $fillable = [
         'date',
-        'po'
+        'need_to_order',
+        'item_code'
     ];
 
     protected $casts = [
-        'date' => 'date'
+        'date' => 'date',
+        'need_to_order' => 'integer',
+        'item_code' => 'integer'
     ];
 }
